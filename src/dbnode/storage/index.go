@@ -41,16 +41,17 @@ import (
 	"github.com/m3db/m3/src/dbnode/storage/index/convert"
 	"github.com/m3db/m3/src/dbnode/storage/namespace"
 	"github.com/m3db/m3/src/m3ninx/doc"
+	"github.com/m3db/m3/src/m3ninx/idx"
 	m3ninxindex "github.com/m3db/m3/src/m3ninx/index"
 	"github.com/m3db/m3/src/m3ninx/index/segment"
 	"github.com/m3db/m3/src/m3ninx/index/segment/builder"
-	"github.com/m3db/m3/src/x/resource"
 	xclose "github.com/m3db/m3/src/x/close"
 	"github.com/m3db/m3/src/x/context"
 	xerrors "github.com/m3db/m3/src/x/errors"
 	"github.com/m3db/m3/src/x/ident"
 	"github.com/m3db/m3/src/x/instrument"
 	xlog "github.com/m3db/m3/src/x/log"
+	"github.com/m3db/m3/src/x/resource"
 	xsync "github.com/m3db/m3/src/x/sync"
 	xtime "github.com/m3db/m3/src/x/time"
 
@@ -167,6 +168,23 @@ type newNamespaceIndexOpts struct {
 	newBlockFn      newBlockFn
 }
 
+// execBlockQueryFn executes a query against the given block whilst tracking state.
+type execBlockQueryFn func(
+	cancellable *resource.CancellableLifetime,
+	block index.Block,
+	query index.Query,
+	opts index.QueryOptions,
+	state *asyncQueryExecState,
+	results index.BaseResults,
+)
+
+// asyncQueryExecState tracks the async execution errors and results for a query.
+type asyncQueryExecState struct {
+	sync.Mutex
+	multiErr   xerrors.MultiError
+	exhaustive bool
+}
+
 // newNamespaceIndex returns a new namespaceIndex for the provided namespace.
 func newNamespaceIndex(
 	nsMD namespace.Metadata,
@@ -265,6 +283,7 @@ func newNamespaceIndexWithOptions(
 		queryWorkersPool: newIndexOpts.opts.QueryIDsWorkerPool(),
 		metrics:          newNamespaceIndexMetrics(indexOpts, instrumentOpts),
 	}
+
 	if runtimeOptsMgr != nil {
 		idx.runtimeOptsListener = runtimeOptsMgr.RegisterListener(idx)
 	}
@@ -868,7 +887,7 @@ func (i *nsIndex) Query(
 	results.Reset(i.nsMetadata.ID(), index.QueryResultsOptions{
 		SizeLimit: opts.Limit,
 	})
-	exhaustive, err := i.query(ctx, query, results, opts)
+	exhaustive, err := i.query(ctx, query, results, opts, i.execBlockQueryFn)
 	if err != nil {
 		return index.QueryResult{}, err
 	}
@@ -890,7 +909,12 @@ func (i *nsIndex) AggregateQuery(
 		TermFilter: opts.TermFilter,
 		Type:       opts.Type,
 	})
-	exhaustive, err := i.query(ctx, query, results, opts.QueryOptions)
+	// use appropriate fn to query underlying blocks.
+	fn := i.execBlockQueryFn
+	if query.Equal(idx.NewAllQuery()) {
+		fn = i.execBlockAggregateQueryFn
+	}
+	exhaustive, err := i.query(ctx, query, results, opts.QueryOptions, fn)
 	if err != nil {
 		return index.AggregateQueryResult{}, err
 	}
@@ -905,6 +929,7 @@ func (i *nsIndex) query(
 	query index.Query,
 	results index.BaseResults,
 	opts index.QueryOptions,
+	execBlockFn execBlockQueryFn,
 ) (bool, error) {
 	// Capture start before needing to acquire lock.
 	start := i.nowFn()
@@ -940,49 +965,18 @@ func (i *nsIndex) query(
 	}
 
 	var (
-		deadline = start.Add(timeout)
-		wg       sync.WaitGroup
-
 		// State contains concurrent mutable state for async execution below.
-		state = struct {
-			sync.Mutex
-			multiErr   xerrors.MultiError
-			exhaustive bool
-		}{
+		state = asyncQueryExecState{
 			exhaustive: true,
 		}
+		deadline = start.Add(timeout)
+		wg       sync.WaitGroup
 	)
 
 	// Create a cancellable lifetime and cancel it at end of this method so that
 	// no child async task modifies the result after this method returns.
 	cancellable := resource.NewCancellableLifetime()
 	defer cancellable.Cancel()
-
-	execBlockQuery := func(block index.Block) {
-		blockExhaustive, err := block.Query(cancellable, query, opts, results)
-		if err == index.ErrUnableToQueryBlockClosed {
-			// NB(r): Because we query this block outside of the results lock, it's
-			// possible this block may get closed if it slides out of retention, in
-			// that case those results are no longer considered valid and outside of
-			// retention regardless, so this is a non-issue.
-			err = nil
-		}
-
-		state.Lock()
-		defer state.Unlock()
-
-		if err != nil {
-			state.multiErr = state.multiErr.Add(err)
-			return
-		}
-
-		if blockExhaustive {
-			return
-		}
-
-		// If block had more data but we stopped early, need to notify caller.
-		state.exhaustive = false
-	}
 
 	for _, block := range blocks {
 		// Capture block for async query execution below.
@@ -1009,7 +1003,7 @@ func (i *nsIndex) query(
 			// No timeout, just wait blockingly for a worker.
 			wg.Add(1)
 			i.queryWorkersPool.Go(func() {
-				execBlockQuery(block)
+				execBlockFn(cancellable, block, query, opts, &state, results)
 				wg.Done()
 			})
 			continue
@@ -1020,7 +1014,7 @@ func (i *nsIndex) query(
 		if timeLeft := deadline.Sub(i.nowFn()); timeLeft > 0 {
 			wg.Add(1)
 			timedOut := !i.queryWorkersPool.GoWithTimeout(func() {
-				execBlockQuery(block)
+				execBlockFn(cancellable, block, query, opts, &state, results)
 				wg.Done()
 			}, timeLeft)
 
@@ -1083,6 +1077,81 @@ func (i *nsIndex) query(
 	}
 
 	return exhaustive, nil
+}
+
+func (i *nsIndex) execBlockQueryFn(
+	cancellable *resource.CancellableLifetime,
+	block index.Block,
+	query index.Query,
+	opts index.QueryOptions,
+	state *asyncQueryExecState,
+	results index.BaseResults,
+) {
+	blockExhaustive, err := block.Query(cancellable, query, opts, results)
+	if err == index.ErrUnableToQueryBlockClosed {
+		// NB(r): Because we query this block outside of the results lock, it's
+		// possible this block may get closed if it slides out of retention, in
+		// that case those results are no longer considered valid and outside of
+		// retention regardless, so this is a non-issue.
+		err = nil
+	}
+
+	state.Lock()
+	defer state.Unlock()
+
+	if err != nil {
+		state.multiErr = state.multiErr.Add(err)
+		return
+	}
+
+	if blockExhaustive {
+		return
+	}
+
+	// If block had more data but we stopped early, need to notify caller.
+	state.exhaustive = false
+}
+
+func (i *nsIndex) execBlockAggregateQueryFn(
+	cancellable *resource.CancellableLifetime,
+	block index.Block,
+	query index.Query,
+	opts index.QueryOptions,
+	state *asyncQueryExecState,
+	results index.BaseResults,
+) {
+	aggResults, ok := results.(index.AggregateResults)
+	if !ok { // should never happen
+		state.Lock()
+		state.multiErr = state.multiErr.Add(
+			fmt.Errorf("unknown results type [%T] received during aggregation", results))
+		state.Unlock()
+		return
+	}
+
+	blockExhaustive, err := block.Aggregate(cancellable, opts, aggResults)
+	if err == index.ErrUnableToQueryBlockClosed {
+		// NB(r): Because we query this block outside of the results lock, it's
+		// possible this block may get closed if it slides out of retention, in
+		// that case those results are no longer considered valid and outside of
+		// retention regardless, so this is a non-issue.
+		err = nil
+	}
+
+	state.Lock()
+	defer state.Unlock()
+
+	if err != nil {
+		state.multiErr = state.multiErr.Add(err)
+		return
+	}
+
+	if blockExhaustive {
+		return
+	}
+
+	// If block had more data but we stopped early, need to notify caller.
+	state.exhaustive = false
 }
 
 func (i *nsIndex) timeoutForQueryWithRLock(

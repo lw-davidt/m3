@@ -45,6 +45,14 @@ const (
 	documentArrayPoolSize        = 256
 	documentArrayPoolCapacity    = 256
 	documentArrayPoolMaxCapacity = 256 // Do not allow grows, since we know the size
+
+	// aggregateResultsEntryArrayPool size in general: 256*256*sizeof(doc.Field)
+	// = 256 * 256 * 16
+	// = 1mb (but with Go's heap probably 2mb)
+	// TODO(prateek): Make this configurable in a followup change.
+	aggregateResultsEntryArrayPoolSize        = 256
+	aggregateResultsEntryArrayPoolCapacity    = 256
+	aggregateResultsEntryArrayPoolMaxCapacity = 256 // Do not allow grows, since we know the size
 )
 
 var (
@@ -102,6 +110,7 @@ type opts struct {
 	aggResultsPool                  AggregateResultsPool
 	aggValuesPool                   AggregateValuesPool
 	docArrayPool                    doc.DocumentArrayPool
+	aggResultsEntryArrayPool        AggregateResultsEntryArrayPool
 	foregroundCompactionPlannerOpts compaction.PlannerOptions
 	backgroundCompactionPlannerOpts compaction.PlannerOptions
 	postingsListCache               *PostingsListCache
@@ -131,6 +140,14 @@ func NewOptions() Options {
 	})
 	docArrayPool.Init()
 
+	aggResultsEntryArrayPool := NewAggregateResultsEntryArrayPool(AggregateResultsEntryArrayPoolOpts{
+		Options: pool.NewObjectPoolOptions().
+			SetSize(aggregateResultsEntryArrayPoolSize),
+		Capacity:    aggregateResultsEntryArrayPoolCapacity,
+		MaxCapacity: aggregateResultsEntryArrayPoolMaxCapacity,
+	})
+	aggResultsEntryArrayPool.Init()
+
 	instrumentOpts := instrument.NewOptions()
 	opts := &opts{
 		insertMode:                      defaultIndexInsertMode,
@@ -145,6 +162,7 @@ func NewOptions() Options {
 		aggResultsPool:                  aggResultsPool,
 		aggValuesPool:                   aggValuesPool,
 		docArrayPool:                    docArrayPool,
+		aggResultsEntryArrayPool:        aggResultsEntryArrayPool,
 		foregroundCompactionPlannerOpts: defaultForegroundCompactionOpts,
 		backgroundCompactionPlannerOpts: defaultBackgroundCompactionOpts,
 	}
@@ -302,6 +320,16 @@ func (o *opts) SetDocumentArrayPool(value doc.DocumentArrayPool) Options {
 
 func (o *opts) DocumentArrayPool() doc.DocumentArrayPool {
 	return o.docArrayPool
+}
+
+func (o *opts) SetAggregateResultsEntryArrayPool(value AggregateResultsEntryArrayPool) Options {
+	opts := *o
+	opts.aggResultsEntryArrayPool = value
+	return &opts
+}
+
+func (o *opts) AggregateResultsEntryArrayPool() AggregateResultsEntryArrayPool {
+	return o.aggResultsEntryArrayPool
 }
 
 func (o *opts) SetForegroundCompactionPlannerOptions(value compaction.PlannerOptions) Options {

@@ -192,6 +192,35 @@ func (mr *MockAggregateResultsMockRecorder) AddDocuments(arg0 interface{}) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddDocuments", reflect.TypeOf((*MockAggregateResults)(nil).AddDocuments), arg0)
 }
 
+// AddFields mocks base method
+func (m *MockAggregateResults) AddFields(arg0 []AggregateResultsEntry) (int, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AddFields", arg0)
+	ret0, _ := ret[0].(int)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// AddFields indicates an expected call of AddFields
+func (mr *MockAggregateResultsMockRecorder) AddFields(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddFields", reflect.TypeOf((*MockAggregateResults)(nil).AddFields), arg0)
+}
+
+// AggregateResultsOptions mocks base method
+func (m *MockAggregateResults) AggregateResultsOptions() AggregateResultsOptions {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AggregateResultsOptions")
+	ret0, _ := ret[0].(AggregateResultsOptions)
+	return ret0
+}
+
+// AggregateResultsOptions indicates an expected call of AggregateResultsOptions
+func (mr *MockAggregateResultsMockRecorder) AggregateResultsOptions() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AggregateResultsOptions", reflect.TypeOf((*MockAggregateResults)(nil).AggregateResultsOptions))
+}
+
 // Finalize mocks base method
 func (m *MockAggregateResults) Finalize() {
 	m.ctrl.T.Helper()
@@ -293,6 +322,21 @@ func (m *MockBlock) AddResults(arg0 result.IndexBlock) error {
 func (mr *MockBlockMockRecorder) AddResults(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddResults", reflect.TypeOf((*MockBlock)(nil).AddResults), arg0)
+}
+
+// Aggregate mocks base method
+func (m *MockBlock) Aggregate(arg0 *resource.CancellableLifetime, arg1 QueryOptions, arg2 AggregateResults) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Aggregate", arg0, arg1, arg2)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Aggregate indicates an expected call of Aggregate
+func (mr *MockBlockMockRecorder) Aggregate(arg0, arg1, arg2 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Aggregate", reflect.TypeOf((*MockBlock)(nil).Aggregate), arg0, arg1, arg2)
 }
 
 // Close mocks base method

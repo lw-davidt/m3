@@ -33,11 +33,11 @@ import (
 	"github.com/m3db/m3/src/m3ninx/index/segment/builder"
 	"github.com/m3db/m3/src/m3ninx/index/segment/fst"
 	"github.com/m3db/m3/src/m3ninx/index/segment/mem"
-	"github.com/m3db/m3/src/x/resource"
 	"github.com/m3db/m3/src/x/context"
 	"github.com/m3db/m3/src/x/ident"
 	"github.com/m3db/m3/src/x/instrument"
 	"github.com/m3db/m3/src/x/pool"
+	"github.com/m3db/m3/src/x/resource"
 	xtime "github.com/m3db/m3/src/x/time"
 )
 
@@ -181,6 +181,16 @@ type AggregateResults interface {
 		aggregateQueryOpts AggregateResultsOptions,
 	)
 
+	// AggregateResultsOptions returns the set AggregateResultsOptions.
+	AggregateResultsOptions() AggregateResultsOptions
+
+	// AddFields adds the batch of fields to the results set, it will
+	// take a copy of the bytes backing the documents so the original can be
+	// modified after this function returns without affecting the results map.
+	AddFields(
+		batch []AggregateResultsEntry,
+	) (size int, err error)
+
 	// Map returns a map from tag name -> possible tag values,
 	// comprising aggregate results.
 	// Since a lock is not held when accessing the map after a call to this
@@ -238,6 +248,13 @@ type AggregateValuesPool interface {
 	Put(value AggregateValues)
 }
 
+// AggregateResultsEntry is used during block.Aggregate() execution
+// to collect entries.
+type AggregateResultsEntry struct {
+	Field ident.ID
+	Terms []ident.ID
+}
+
 // OnIndexSeries provides a set of callback hooks to allow the reverse index
 // to do lifecycle management of any resources retained during indexing.
 type OnIndexSeries interface {
@@ -271,6 +288,16 @@ type Block interface {
 		query Query,
 		opts QueryOptions,
 		results BaseResults,
+	) (exhaustive bool, err error)
+
+	// Aggregate aggregates known tag names/values.
+	// NB(prateek): this is different from Query, as we can
+	// avoid going to documents, relying purely on the indexed
+	// FSTs.
+	Aggregate(
+		cancellable *resource.CancellableLifetime,
+		opts QueryOptions,
+		results AggregateResults,
 	) (exhaustive bool, err error)
 
 	// AddResults adds bootstrap results to the block, if c.
@@ -774,6 +801,12 @@ type Options interface {
 
 	// DocumentArrayPool returns the document array pool.
 	DocumentArrayPool() doc.DocumentArrayPool
+
+	// SetAggregateResultsEntryArrayPool sets the aggregate results entry array pool.
+	SetAggregateResultsEntryArrayPool(value AggregateResultsEntryArrayPool) Options
+
+	// AggregateResultsEntryArrayPool returns the aggregate results entry array pool.
+	AggregateResultsEntryArrayPool() AggregateResultsEntryArrayPool
 
 	// SetForegroundCompactionPlannerOptions sets the compaction planner options.
 	SetForegroundCompactionPlannerOptions(v compaction.PlannerOptions) Options

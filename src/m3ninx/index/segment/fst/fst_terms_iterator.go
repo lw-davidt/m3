@@ -33,7 +33,7 @@ type fstTermsIterOpts struct {
 }
 
 func (o fstTermsIterOpts) Close() error {
-	if o.finalizeFST {
+	if o.finalizeFST && o.fst != nil {
 		return o.fst.Close()
 	}
 	return nil
@@ -121,7 +121,6 @@ func (f *fstTermsIter) Close() error {
 	var multiErr xerrors.MultiError
 	multiErr = multiErr.Add(f.iter.Close())
 	multiErr = multiErr.Add(f.opts.Close())
-
 	f.clear()
 	return multiErr.FinalError()
 }

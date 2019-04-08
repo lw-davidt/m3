@@ -21,6 +21,7 @@
 package index
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"sync"
@@ -37,11 +38,13 @@ import (
 	"github.com/m3db/m3/src/m3ninx/index/segment/fst"
 	"github.com/m3db/m3/src/m3ninx/search"
 	"github.com/m3db/m3/src/m3ninx/search/executor"
-	"github.com/m3db/m3/src/x/resource"
 	"github.com/m3db/m3/src/x/context"
 	xerrors "github.com/m3db/m3/src/x/errors"
+	"github.com/m3db/m3/src/x/ident"
 	"github.com/m3db/m3/src/x/instrument"
 	xlog "github.com/m3db/m3/src/x/log"
+	"github.com/m3db/m3/src/x/pool"
+	"github.com/m3db/m3/src/x/resource"
 	xtime "github.com/m3db/m3/src/x/time"
 
 	"github.com/uber-go/tally"
@@ -75,7 +78,8 @@ const (
 	blockStateSealed
 	blockStateClosed
 
-	defaultQueryDocsBatchSize = 256
+	defaultQueryDocsBatchSize             = 256
+	defaultAggregateResultsEntryBatchSize = 256
 
 	compactDebugLogEvery = 1 // Emit debug log for every compaction
 )
@@ -114,6 +118,9 @@ type block struct {
 	iopts         instrument.Options
 	nsMD          namespace.Metadata
 	docsPool      doc.DocumentArrayPool
+	aggEntryPool  AggregateResultsEntryArrayPool
+	idPool        ident.Pool
+	bytesPool     pool.CheckedBytesPool
 
 	compactingForeground  bool
 	compactingBackground  bool
@@ -221,6 +228,9 @@ func NewBlock(
 		iopts:               iopts,
 		nsMD:                md,
 		docsPool:            docsPool,
+		aggEntryPool:        indexOpts.AggregateResultsEntryArrayPool(),
+		idPool:              indexOpts.IdentifierPool(),
+		bytesPool:           indexOpts.CheckedBytesPool(),
 		foregroundCompactor: foregroundCompactor,
 		backgroundCompactor: backgroundCompactor,
 		metrics:             newBlockMetrics(iopts.MetricsScope()),
@@ -768,6 +778,31 @@ func (b *block) executorWithRLock() (search.Executor, error) {
 	return executor.NewExecutor(readers), nil
 }
 
+func (b *block) segmentsWithRLock() ([]segment.Segment, error) {
+	expectedSegments := len(b.foregroundSegments) + len(b.backgroundSegments)
+	for _, group := range b.shardRangesSegments {
+		expectedSegments += len(group.segments)
+	}
+
+	segments := make([]segment.Segment, 0, expectedSegments)
+	// Add foreground & background segments.
+	for _, seg := range b.foregroundSegments {
+		segments = append(segments, seg.Segment())
+	}
+	for _, seg := range b.backgroundSegments {
+		segments = append(segments, seg.Segment())
+	}
+
+	// Loop over the segments associated to shard time ranges.
+	for _, group := range b.shardRangesSegments {
+		for _, seg := range group.segments {
+			segments = append(segments, seg)
+		}
+	}
+
+	return segments, nil
+}
+
 // Query acquires a read lock on the block so that the segments
 // are guaranteed to not be freed/released while accumulating results.
 // This allows references to the mmap'd segment data to be accumulated
@@ -877,6 +912,190 @@ func (b *block) addQueryResults(
 	var emptyDoc doc.Document
 	for i := range batch {
 		batch[i] = emptyDoc
+	}
+	batch = batch[:0]
+
+	// Return results
+	return batch, size, err
+}
+
+// Aggregate acquires a read lock on the block so that the segments
+// are guaranteed to not be freed/released while accumulating results.
+// This allows references to the mmap'd segment data to be accumulated
+// and then copied into the results before this method returns (it is not
+// safe to return docs directly from the segments from this method, the
+// results datastructure is used to copy it every time documents are added
+// to the results datastructure). This is similar to how Query() operates.
+// NB: Aggregate is required in addition to Query, to optimise for the case
+// when we can skip going to raw documents, and instead rely on pre-aggregated
+// results via the FST underlying the index.
+func (b *block) Aggregate(
+	cancellable *resource.CancellableLifetime,
+	opts QueryOptions,
+	results AggregateResults,
+) (bool, error) {
+	b.RLock()
+	defer b.RUnlock()
+
+	if b.state == blockStateClosed {
+		return false, ErrUnableToQueryBlockClosed
+	}
+
+	segs, err := b.segmentsWithRLock()
+	if err != nil {
+		return false, err
+	}
+
+	size := results.Size()
+	batch := b.aggEntryPool.Get()
+	batchSize := cap(batch)
+	if batchSize == 0 {
+		batchSize = defaultAggregateResultsEntryBatchSize
+	}
+
+	aggOpts := results.AggregateResultsOptions()
+	iterateTerms := aggOpts.Type == AggregateTagNamesAndValues
+	defer func() {
+		b.aggEntryPool.Put(batch)
+	}()
+
+	iter, err := newFieldsAndTermsIterator(nil, fieldsAndTermsIteratorOpts{})
+	if err != nil {
+		return false, err
+	}
+
+	for _, s := range segs {
+		if opts.LimitExceeded(size) {
+			break
+		}
+
+		err = iter.Reset(s, fieldsAndTermsIteratorOpts{
+			iterateTerms: iterateTerms,
+			allowFn: func(field []byte) bool {
+				// skip any field names that we shouldn't allow.
+				if bytes.Equal(field, doc.IDReservedFieldName) {
+					return false
+				}
+				return aggOpts.TermFilter.Allow(field)
+			},
+		})
+		if err != nil {
+			return false, err
+		}
+
+		for iter.Next() {
+			if opts.LimitExceeded(size) {
+				break
+			}
+
+			field, term := iter.Current()
+			batch = b.appendAggregateResults(batch, field, term, iterateTerms)
+			if len(batch) < batchSize {
+				continue
+			}
+
+			batch, size, err = b.addAggregateResults(cancellable, results, batch)
+			if err != nil {
+				iter.Close()
+				return false, err
+			}
+		}
+
+		if err := iter.Err(); err != nil {
+			iter.Close()
+			return false, err
+		}
+
+		if err := iter.Close(); err != nil {
+			return false, err
+		}
+	}
+
+	if err := iter.Close(); err != nil {
+		return false, err
+	}
+
+	// Add last batch to results if remaining.
+	if len(batch) > 0 {
+		batch, size, err = b.addAggregateResults(cancellable, results, batch)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	exhaustive := !opts.LimitExceeded(size)
+	return exhaustive, nil
+}
+
+func (b *block) appendAggregateResults(
+	batch []AggregateResultsEntry,
+	field, term []byte,
+	includeTerms bool,
+) []AggregateResultsEntry {
+	// NB(prateek): we make a copy of the (field, term) entries returned
+	// by the iterator during traversal, because the []byte are only valid per entry during
+	// the traversal (i.e. calling Next() invalidates the []byte). We choose to do this
+	// instead of checking if the entry is required (duplicates may exist in the results map
+	// already), as it reduces contention on the map itself. Further, the ownership of these
+	// idents is transferred to the results map, which either hangs on to them (if they are new),
+	// or finalizes them if they are duplicates.
+	var (
+		entry            AggregateResultsEntry
+		lastField        []byte
+		lastFieldIsValid bool
+	)
+	// relying on the fact that iterator traversal is in order, we can avoid creating duplicate
+	// entries for the same fields, by checking the last batch entry to see if the bytes are
+	// the same.
+	if len(batch) > 0 {
+		lastFieldIsValid = true
+		lastField = batch[len(batch)-1].Field.Bytes()
+	}
+	if lastFieldIsValid && bytes.Equal(lastField, field) {
+		entry = batch[len(batch)-1] // avoid alloc cause we already have the field
+	} else {
+		entry.Field = b.pooledID(field) // allocate id because this is the first time we've seen it
+	}
+
+	if includeTerms {
+		// terms are always new (as far we know without checking the map for duplicates), so we allocate
+		entry.Terms = append(entry.Terms, b.pooledID(term))
+	}
+
+	batch = append(batch, entry)
+	return batch
+}
+
+func (b *block) pooledID(id []byte) ident.ID {
+	data := b.bytesPool.Get(len(id))
+	data.IncRef()
+	data.AppendAll(id)
+	data.DecRef()
+	return b.idPool.BinaryID(data)
+}
+
+func (b *block) addAggregateResults(
+	cancellable *resource.CancellableLifetime,
+	results AggregateResults,
+	batch []AggregateResultsEntry,
+) ([]AggregateResultsEntry, int, error) {
+	// Checkout the lifetime of the query before adding results
+	queryValid := cancellable.TryCheckout()
+	if !queryValid {
+		// Query not valid any longer, do not add results and return early
+		return batch, 0, errCancelledQuery
+	}
+
+	// Try to add the docs to the resource
+	size, err := results.AddFields(batch)
+
+	// Immediately release the checkout on the lifetime of query
+	cancellable.ReleaseCheckout()
+
+	// Reset batch
+	var emptyField AggregateResultsEntry
+	for i := range batch {
+		batch[i] = emptyField
 	}
 	batch = batch[:0]
 

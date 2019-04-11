@@ -22,22 +22,23 @@ package writer
 
 import (
 	"github.com/m3db/m3/src/metrics/metric/aggregated"
-	"github.com/m3db/m3/src/x/log"
+
+	"go.uber.org/zap"
 )
 
 type loggingWriter struct {
-	logger log.Logger
+	logger *zap.Logger
 }
 
 // NewLoggingWriter creates a new logging writer.
-func NewLoggingWriter(logger log.Logger) Writer {
+func NewLoggingWriter(logger *zap.Logger) Writer {
 	return loggingWriter{logger: logger}
 }
 
 func (w loggingWriter) Write(mp aggregated.ChunkedMetricWithStoragePolicy) error {
-	w.logger.WithFields(
-		log.NewField("metric", mp.ChunkedMetric.String()),
-		log.NewField("policy", mp.StoragePolicy.String()),
+	w.logger.With(
+		zap.Stringer("metric", mp.ChunkedMetric),
+		zap.Stringer("policy", mp.StoragePolicy),
 	).Info("aggregated metric with policy")
 	return nil
 }

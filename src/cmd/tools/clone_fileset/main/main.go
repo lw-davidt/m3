@@ -22,11 +22,13 @@ package main
 
 import (
 	"flag"
+	"log"
 	"os"
 
 	"github.com/m3db/m3/src/dbnode/persist/fs/clone"
-	xlog "github.com/m3db/m3/src/x/log"
 	xtime "github.com/m3db/m3/src/x/time"
+
+	"go.uber.org/zap"
 )
 
 var (
@@ -53,7 +55,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	log := xlog.NewLogger(os.Stderr)
+	rawLogger, err := zap.NewDevelopment()
+	if err != nil {
+		log.Fatalf("unable to create logger: %+v", err)
+	}
+	log := rawLogger.Sugar()
+
 	src := clone.FileSetID{
 		PathPrefix: *optSrcPathPrefix,
 		Namespace:  *optSrcNamespace,

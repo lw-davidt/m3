@@ -45,8 +45,9 @@ import (
 	"github.com/m3db/m3/src/x/checked"
 	"github.com/m3db/m3/src/x/context"
 	"github.com/m3db/m3/src/x/ident"
-	"github.com/m3db/m3/src/x/log"
 	"github.com/m3db/m3/src/x/pool"
+
+	"go.uber.org/zap"
 )
 
 var (
@@ -79,7 +80,7 @@ type blockRetriever struct {
 
 	opts   BlockRetrieverOptions
 	fsOpts Options
-	logger log.Logger
+	logger *zap.Logger
 
 	newSeekerMgrFn newSeekerMgrFn
 
@@ -363,10 +364,10 @@ func (r *blockRetriever) fetchBatch(
 
 	err = seekerMgr.Return(shard, blockStart, seeker)
 	if err != nil {
-		r.logger.WithFields(
-			log.NewField("shard", shard),
-			log.NewField("blockStart", blockStart.Unix()),
-			log.NewField("err", err.Error()),
+		r.logger.With(
+			zap.Uint32("shard", shard),
+			zap.Int64("blockStart", blockStart.Unix()),
+			zap.Error(err),
 		).Error("err returning seeker for shard")
 	}
 }

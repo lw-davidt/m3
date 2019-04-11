@@ -86,7 +86,7 @@ func Run(runOpts RunOptions) {
 
 	instrumentOpts := instrument.NewOptions().
 		SetMetricsScope(scope).
-		SetZapLogger(logger)
+		SetLogger(logger)
 
 	logger.Info("creating etcd client")
 	clusterClient, err := cfg.Etcd.NewClient(instrumentOpts)
@@ -178,7 +178,7 @@ func newReporter(
 	instrumentOpts instrument.Options,
 ) (reporter.Reporter, error) {
 	scope := instrumentOpts.MetricsScope()
-	logger := instrumentOpts.ZapLogger()
+	logger := instrumentOpts.Logger()
 	clockOpts := cfg.Clock.NewOptions()
 
 	logger.Info("creating metrics matcher cache")

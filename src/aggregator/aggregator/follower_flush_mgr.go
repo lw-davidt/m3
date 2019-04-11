@@ -26,11 +26,11 @@ import (
 
 	schema "github.com/m3db/m3/src/aggregator/generated/proto/flush"
 	"github.com/m3db/m3/src/x/clock"
-	"github.com/m3db/m3/src/x/log"
 	xsync "github.com/m3db/m3/src/x/sync"
 	"github.com/m3db/m3/src/x/watch"
 
 	"github.com/uber-go/tally"
+	"go.uber.org/zap"
 )
 
 type standardFollowerFlusherMetrics struct {
@@ -106,7 +106,7 @@ type followerFlushManager struct {
 	flushTimesManager     FlushTimesManager
 	maxBufferSize         time.Duration
 	forcedFlushWindowSize time.Duration
-	logger                log.Logger
+	logger                *zap.Logger
 	scope                 tally.Scope
 
 	doneCh          <-chan struct{}
@@ -312,7 +312,7 @@ func (mgr *followerFlushManager) flushersFromKVUpdateWithLock(buckets []*flushBu
 				bucket.flushers,
 				getStandardFlushTimesByResolutionFn,
 				mgr.metrics.standard,
-				mgr.logger.WithFields(log.NewField("flusher-type", "standard")),
+				mgr.logger.With(zap.String("flusher-type", "standard")),
 			)
 		case forwardedMetricListType:
 			flushersByInterval[i].flushers = mgr.forwardedFlushersFromKVUpdateWithLock(bucketID.forwarded, bucket.flushers)
@@ -322,7 +322,7 @@ func (mgr *followerFlushManager) flushersFromKVUpdateWithLock(buckets []*flushBu
 				bucket.flushers,
 				getTimedFlushTimesByResolutionFn,
 				mgr.metrics.timed,
-				mgr.logger.WithFields(log.NewField("flusher-type", "timed")),
+				mgr.logger.With(zap.String("flusher-type", "timed")),
 			)
 		default:
 			panic("should never get here")
@@ -336,7 +336,7 @@ func (mgr *followerFlushManager) standardFlushersFromKVUpdateWithLock(
 	flushers []flushingMetricList,
 	getFlushTimesByResolutionFn getFlushTimesByResolutionFn,
 	metrics standardFollowerFlusherMetrics,
-	logger log.Logger,
+	logger *zap.Logger,
 ) []flusherWithTime {
 	var (
 		flushersWithTime = make([]flusherWithTime, 0, defaultInitialFlushCapacity)
@@ -346,8 +346,8 @@ func (mgr *followerFlushManager) standardFlushersFromKVUpdateWithLock(
 		shardFlushTimes, exists := mgr.received.ByShard[shard]
 		if !exists {
 			metrics.shardNotFound.Inc(1)
-			logger.WithFields(
-				log.NewField("shard", shard),
+			logger.With(
+				zap.Uint32("shard", shard),
 			).Warn("shard not found in flush times")
 			continue
 		}
@@ -355,9 +355,9 @@ func (mgr *followerFlushManager) standardFlushersFromKVUpdateWithLock(
 		lastFlushedAtNanos, exists := flushTimes[int64(resolution)]
 		if !exists {
 			metrics.resolutionNotFound.Inc(1)
-			logger.WithFields(
-				log.NewField("shard", shard),
-				log.NewField("resolution", resolution.String()),
+			logger.With(
+				zap.Uint32("shard", shard),
+				zap.Stringer("resolution", resolution),
 			).Warn("resolution not found in flush times")
 			continue
 		}
@@ -385,39 +385,39 @@ func (mgr *followerFlushManager) forwardedFlushersFromKVUpdateWithLock(
 		shardFlushTimes, exists := mgr.received.ByShard[shard]
 		if !exists {
 			mgr.metrics.forwarded.shardNotFound.Inc(1)
-			mgr.logger.WithFields(
-				log.NewField("flusher-type", "forwarded"),
-				log.NewField("shard", shard),
+			mgr.logger.With(
+				zap.String("flusher-type", "forwarded"),
+				zap.Uint32("shard", shard),
 			).Warn("shard not found in flush times")
 			continue
 		}
 		flushTimesForResolution, exists := shardFlushTimes.ForwardedByResolution[int64(resolution)]
 		if !exists {
 			mgr.metrics.forwarded.resolutionNotFound.Inc(1)
-			mgr.logger.WithFields(
-				log.NewField("flusher-type", "forwarded"),
-				log.NewField("shard", shard),
-				log.NewField("resolution", resolution.String()),
+			mgr.logger.With(
+				zap.String("flusher-type", "forwarded"),
+				zap.Uint32("shard", shard),
+				zap.Stringer("resolution", resolution),
 			).Warn("resolution not found in flush times")
 			continue
 		}
 		if flushTimesForResolution == nil {
 			mgr.metrics.forwarded.nilForwardedTimes.Inc(1)
-			mgr.logger.WithFields(
-				log.NewField("flusher-type", "forwarded"),
-				log.NewField("shard", shard),
-				log.NewField("resolution", resolution.String()),
+			mgr.logger.With(
+				zap.String("flusher-type", "forwarded"),
+				zap.Uint32("shard", shard),
+				zap.Stringer("resolution", resolution),
 			).Warn("nil flush times")
 			continue
 		}
 		lastFlushedAtNanos, exists := flushTimesForResolution.ByNumForwardedTimes[int32(numForwardedTimes)]
 		if !exists {
 			mgr.metrics.forwarded.numForwardedTimesNotFound.Inc(1)
-			mgr.logger.WithFields(
-				log.NewField("flusher-type", "forwarded"),
-				log.NewField("shard", shard),
-				log.NewField("resolution", resolution.String()),
-				log.NewField("numForwardedTimes", numForwardedTimes),
+			mgr.logger.With(
+				zap.String("flusher-type", "forwarded"),
+				zap.Uint32("shard", shard),
+				zap.Stringer("resolution", resolution),
+				zap.Int("numForwardedTimes", numForwardedTimes),
 			).Warn("numForwardedTimes not found in flush times")
 			continue
 		}

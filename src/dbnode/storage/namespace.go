@@ -45,13 +45,13 @@ import (
 	xerrors "github.com/m3db/m3/src/x/errors"
 	"github.com/m3db/m3/src/x/ident"
 	"github.com/m3db/m3/src/x/instrument"
-	xlog "github.com/m3db/m3/src/x/log"
 	xopentracing "github.com/m3db/m3/src/x/opentracing"
 	xsync "github.com/m3db/m3/src/x/sync"
 	xtime "github.com/m3db/m3/src/x/time"
 
 	opentracinglog "github.com/opentracing/opentracing-go/log"
 	"github.com/uber-go/tally"
+	"go.uber.org/zap"
 )
 
 var (
@@ -112,7 +112,7 @@ type dbNamespace struct {
 	seriesOpts         series.Options
 	nowFn              clock.NowFn
 	snapshotFilesFn    snapshotFilesFn
-	log                xlog.Logger
+	log                *zap.Logger
 	bootstrapState     BootstrapState
 
 	// Contains an entry to all shards for fast shard lookup, an
@@ -293,7 +293,7 @@ func newDatabaseNamespace(
 	}
 
 	iops := opts.InstrumentOptions()
-	logger := iops.Logger().WithFields(xlog.NewField("namespace", id.String()))
+	logger := iops.Logger().With(zap.String("namespace", id.String()))
 	iops = iops.SetLogger(logger)
 	opts = opts.SetInstrumentOptions(iops)
 
@@ -469,8 +469,8 @@ func (n *dbNamespace) closeShards(shards []databaseShard, blockUntilClosed bool)
 		defer wg.Done()
 		if err := shard.Close(); err != nil {
 			n.log.
-				WithFields(xlog.NewField("shard", shard.ID())).
-				Errorf("error occurred closing shard: %v", err)
+				With(zap.Uint32("shard", shard.ID())).
+				Error("error occurred closing shard", zap.Error(err))
 			n.metrics.shards.closeErrors.Inc(1)
 		} else {
 			n.metrics.shards.close.Inc(1)
@@ -795,8 +795,9 @@ func (n *dbNamespace) Bootstrap(start time.Time, process bootstrap.Process) erro
 
 	bootstrapResult, err := process.Run(start, n.metadata, shardIDs)
 	if err != nil {
-		n.log.Errorf("bootstrap for namespace %s aborted due to error: %v",
-			n.id.String(), err)
+		n.log.Error("bootstrap aborted due to error",
+			zap.Stringer("namespace", n.id),
+			zap.Error(err))
 		return err
 	}
 	n.metrics.bootstrap.Success.Inc(1)
@@ -806,10 +807,10 @@ func (n *dbNamespace) Bootstrap(start time.Time, process bootstrap.Process) erro
 	workers.Init()
 
 	numSeries := bootstrapResult.DataResult.ShardResults().NumSeries()
-	n.log.WithFields(
-		xlog.NewField("numShards", len(shards)),
-		xlog.NewField("numSeries", numSeries),
-	).Infof("bootstrap data fetched now initializing shards with series blocks")
+	n.log.With(
+		zap.Int("numShards", len(shards)),
+		zap.Int64("numSeries", numSeries),
+	).Info("bootstrap data fetched now initializing shards with series blocks")
 
 	var (
 		multiErr = xerrors.NewMultiError()
@@ -852,10 +853,10 @@ func (n *dbNamespace) Bootstrap(start time.Time, process bootstrap.Process) erro
 			str := unfulfilled.SummaryString()
 			err := fmt.Errorf("bootstrap completed with unfulfilled ranges: %s", str)
 			multiErr = multiErr.Add(err)
-			n.log.WithFields(
-				xlog.NewField("namespace", n.id.String()),
-				xlog.NewField("bootstrap-type", label),
-			).Errorf(err.Error())
+			n.log.With(
+				zap.String("namespace", n.id.String()),
+				zap.String("bootstrap-type", label),
+			).Error(err.Error())
 		}
 	}
 	markAnyUnfulfilled("data", bootstrapResult.DataResult.Unfulfilled())
@@ -909,9 +910,9 @@ func (n *dbNamespace) Flush(
 			// bootstrapped blocks have been rotated out of the series buffer buckets,
 			// so we wait until the next opportunity.
 			n.log.
-				WithFields(xlog.NewField("shard", shard.ID())).
-				WithFields(xlog.NewField("bootstrapStateBeforeTick", shardBootstrapStateBeforeTick)).
-				WithFields(xlog.NewField("bootstrapStateExists", ok)).
+				With(zap.Uint32("shard", shard.ID())).
+				With(zap.Any("bootstrapStateBeforeTick", shardBootstrapStateBeforeTick)).
+				With(zap.Bool("bootstrapStateExists", ok)).
 				Debug("skipping snapshot due to shard bootstrap state before tick")
 			continue
 		}
@@ -989,9 +990,8 @@ func (n *dbNamespace) Snapshot(
 		if isSnapshotting {
 			// Should never happen because snapshots should never overlap
 			// each other (controlled by loop in flush manager)
-			n.log.
-				WithFields(xlog.NewField("shard", shard.ID())).
-				Errorf("[invariant violated] tried to snapshot shard that is already snapshotting")
+			n.log.With(zap.Uint32("shard", shard.ID())).
+				Error("[invariant violated] tried to snapshot shard that is already snapshotting")
 			continue
 		}
 
@@ -1176,17 +1176,17 @@ func (n *dbNamespace) Repair(
 
 	wg.Wait()
 
-	n.log.WithFields(
-		xlog.NewField("repairTimeRange", tr.String()),
-		xlog.NewField("numTotalShards", len(shards)),
-		xlog.NewField("numShardsRepaired", numShardsRepaired),
-		xlog.NewField("numTotalSeries", numTotalSeries),
-		xlog.NewField("numTotalBlocks", numTotalBlocks),
-		xlog.NewField("numSizeDiffSeries", numSizeDiffSeries),
-		xlog.NewField("numSizeDiffBlocks", numSizeDiffBlocks),
-		xlog.NewField("numChecksumDiffSeries", numChecksumDiffSeries),
-		xlog.NewField("numChecksumDiffBlocks", numChecksumDiffBlocks),
-	).Infof("repair result")
+	n.log.With(
+		zap.String("repairTimeRange", tr.String()),
+		zap.Int("numTotalShards", len(shards)),
+		zap.Int("numShardsRepaired", numShardsRepaired),
+		zap.Int64("numTotalSeries", numTotalSeries),
+		zap.Int64("numTotalBlocks", numTotalBlocks),
+		zap.Int64("numSizeDiffSeries", numSizeDiffSeries),
+		zap.Int64("numSizeDiffBlocks", numSizeDiffBlocks),
+		zap.Int64("numChecksumDiffSeries", numChecksumDiffSeries),
+		zap.Int64("numChecksumDiffBlocks", numChecksumDiffBlocks),
+	).Info("repair result")
 
 	return multiErr.FinalError()
 }

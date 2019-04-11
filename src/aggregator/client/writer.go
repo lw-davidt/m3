@@ -33,9 +33,9 @@ import (
 	"github.com/m3db/m3/src/metrics/metric/aggregated"
 	"github.com/m3db/m3/src/metrics/metric/unaggregated"
 	xerrors "github.com/m3db/m3/src/x/errors"
-	"github.com/m3db/m3/src/x/log"
 
 	"github.com/uber-go/tally"
+	"go.uber.org/zap"
 )
 
 var (
@@ -59,7 +59,7 @@ type newLockedEncoderFn func(protobuf.UnaggregatedOptions) *lockedEncoder
 type writer struct {
 	sync.RWMutex
 
-	log               log.Logger
+	log               *zap.Logger
 	metrics           writerMetrics
 	flushSize         int
 	maxTimerBatchSize int
@@ -267,10 +267,10 @@ func (w *writer) encodeUntimedWithLock(
 	}
 
 	if encodeErr != nil {
-		w.log.WithFields(
-			log.NewField("metric", metricUnion),
-			log.NewField("metadatas", metadatas),
-			log.NewErrField(encodeErr),
+		w.log.With(
+			zap.Any("metric", metricUnion),
+			zap.Any("metadatas", metadatas),
+			zap.Error(encodeErr),
 		).Error("encode untimed metric error")
 		// Rewind buffer and clear out the encoder error.
 		encoder.Truncate(sizeBefore)
@@ -311,10 +311,10 @@ func (w *writer) encodeForwardedWithLock(
 			ForwardMetadata: metadata,
 		}}
 	if err := encoder.EncodeMessage(msg); err != nil {
-		w.log.WithFields(
-			log.NewField("metric", metric),
-			log.NewField("metadata", metadata),
-			log.NewErrField(err),
+		w.log.With(
+			zap.Any("metric", metric),
+			zap.Any("metadata", metadata),
+			zap.Error(err),
 		).Error("encode forwarded metric error")
 		// Rewind buffer and clear out the encoder error.
 		encoder.Truncate(sizeBefore)
@@ -350,10 +350,10 @@ func (w *writer) encodeTimedWithLock(
 			TimedMetadata: metadata,
 		}}
 	if err := encoder.EncodeMessage(msg); err != nil {
-		w.log.WithFields(
-			log.NewField("metric", metric),
-			log.NewField("metadata", metadata),
-			log.NewErrField(err),
+		w.log.With(
+			zap.Any("metric", metric),
+			zap.Any("metadata", metadata),
+			zap.Error(err),
 		).Error("encode timed metric error")
 		// Rewind buffer and clear out the encoder error.
 		encoder.Truncate(sizeBefore)

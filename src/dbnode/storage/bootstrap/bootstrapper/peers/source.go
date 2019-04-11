@@ -38,14 +38,15 @@ import (
 	"github.com/m3db/m3/src/dbnode/topology"
 	"github.com/m3db/m3/src/x/context"
 	"github.com/m3db/m3/src/x/instrument"
-	xlog "github.com/m3db/m3/src/x/log"
 	xsync "github.com/m3db/m3/src/x/sync"
 	xtime "github.com/m3db/m3/src/x/time"
+
+	"go.uber.org/zap"
 )
 
 type peersSource struct {
 	opts  Options
-	log   xlog.Logger
+	log   *zap.Logger
 	nowFn clock.NowFn
 }
 
@@ -125,9 +126,9 @@ func (s *peersSource) ReadData(
 			s.log.Fatal("tried to perform a bootstrap with persistence without persist manager")
 		}
 
-		s.log.WithFields(
-			xlog.NewField("namespace", namespace.String()),
-		).Infof("peers bootstrapper resolving block retriever")
+		s.log.With(
+			zap.Stringer("namespace", namespace),
+		).Info("peers bootstrapper resolving block retriever")
 
 		r, err := retrieverMgr.Retriever(nsMetadata)
 		if err != nil {
@@ -150,7 +151,7 @@ func (s *peersSource) ReadData(
 	result := result.NewDataBootstrapResult()
 	session, err := s.opts.AdminClient().DefaultAdminSession()
 	if err != nil {
-		s.log.Errorf("peers bootstrapper cannot get default admin session: %v", err)
+		s.log.Error("peers bootstrapper cannot get default admin session", zap.Error(err))
 		result.SetUnfulfilled(shardsTimeRanges)
 		return nil, err
 	}
@@ -170,11 +171,11 @@ func (s *peersSource) ReadData(
 		concurrency = s.opts.ShardPersistenceConcurrency()
 	}
 
-	s.log.WithFields(
-		xlog.NewField("shards", count),
-		xlog.NewField("concurrency", concurrency),
-		xlog.NewField("shouldPersist", shouldPersist),
-	).Infof("peers bootstrapper bootstrapping shards for ranges")
+	s.log.With(
+		zap.Int("shards", count),
+		zap.Int("concurrency", concurrency),
+		zap.Bool("shouldPersist", shouldPersist),
+	).Info("peers bootstrapper bootstrapping shards for ranges")
 	if shouldPersist {
 		go s.startPersistenceQueueWorkerLoop(
 			opts, persistenceWorkerDoneCh, persistenceQueue, persistFlush, result, &resultLock)
@@ -238,9 +239,7 @@ func (s *peersSource) startPersistenceQueueWorkerLoop(
 		}
 
 		// Remove results and make unfulfilled if an error occurred.
-		s.log.WithFields(
-			xlog.NewField("error", err.Error()),
-		).Errorf("peers bootstrapper bootstrap with persistence flush encountered error")
+		s.log.With(zap.Error(err)).Error("peers bootstrapper bootstrap with persistence flush encountered error")
 
 		// Make unfulfilled.
 		lock.Lock()
@@ -322,16 +321,16 @@ func (s *peersSource) logFetchBootstrapBlocksFromPeersOutcome(
 		}
 
 		for block, numSeries := range shardBlockSeriesCounter {
-			s.log.WithFields(
-				xlog.NewField("shard", shard),
-				xlog.NewField("numSeries", numSeries),
-				xlog.NewField("block", block),
+			s.log.With(
+				zap.Uint32("shard", shard),
+				zap.Int64("numSeries", numSeries),
+				zap.Time("blockStart", block.ToTime()),
 			).Info("peer bootstrapped shard")
 		}
 	} else {
-		s.log.WithFields(
-			xlog.NewField("shard", shard),
-			xlog.NewField("error", err.Error()),
+		s.log.With(
+			zap.Uint32("shard", shard),
+			zap.Error(err),
 		).Error("error fetching bootstrap blocks from peers")
 	}
 }
@@ -361,10 +360,10 @@ func (s *peersSource) flush(
 	if persistConfig.FileSetType != persist.FileSetFlushType {
 		// Should never happen.
 		iOpts := s.opts.ResultOptions().InstrumentOptions()
-		instrument.EmitAndLogInvariantViolation(iOpts, func(l xlog.Logger) {
-			l.WithFields(
-				xlog.NewField("namespace", nsMetadata.ID().String()),
-				xlog.NewField("filesetType", persistConfig.FileSetType),
+		instrument.EmitAndLogInvariantViolation(iOpts, func(l *zap.Logger) {
+			l.With(
+				zap.Stringer("namespace", nsMetadata.ID()),
+				zap.Any("filesetType", persistConfig.FileSetType),
 			).Error("error tried to persist data in peers bootstrapper with non-flush fileset type")
 		})
 		return instrument.InvariantErrorf(
@@ -376,10 +375,10 @@ func (s *peersSource) flush(
 		seriesCachePolicy != series.CacheLRU {
 		// Should never happen.
 		iOpts := s.opts.ResultOptions().InstrumentOptions()
-		instrument.EmitAndLogInvariantViolation(iOpts, func(l xlog.Logger) {
-			l.WithFields(
-				xlog.NewField("namespace", nsMetadata.ID().String()),
-				xlog.NewField("cachePolicy", seriesCachePolicy),
+		instrument.EmitAndLogInvariantViolation(iOpts, func(l *zap.Logger) {
+			l.With(
+				zap.Stringer("namespace", nsMetadata.ID()),
+				zap.Any("cachePolicy", seriesCachePolicy),
 			).Error("error tried to persist data in peers bootstrapper with invalid cache policy")
 		})
 		return instrument.InvariantErrorf(
@@ -498,11 +497,11 @@ func (s *peersSource) flush(
 	}
 	if numSeriesTriedToRemoveWithRemainingBlocks > 0 {
 		iOpts := s.opts.ResultOptions().InstrumentOptions()
-		instrument.EmitAndLogInvariantViolation(iOpts, func(l xlog.Logger) {
-			l.WithFields(
-				xlog.NewField("start", tr.Start.Unix()),
-				xlog.NewField("end", tr.End.Unix()),
-				xlog.NewField("numTimes", numSeriesTriedToRemoveWithRemainingBlocks),
+		instrument.EmitAndLogInvariantViolation(iOpts, func(l *zap.Logger) {
+			l.With(
+				zap.Int64("start", tr.Start.Unix()),
+				zap.Int64("end", tr.End.Unix()),
+				zap.Int("numTimes", numSeriesTriedToRemoveWithRemainingBlocks),
 			).Error("error tried to remove series that still has blocks")
 		})
 	}
@@ -552,7 +551,7 @@ func (s *peersSource) ReadIndex(
 
 	session, err := s.opts.AdminClient().DefaultAdminSession()
 	if err != nil {
-		s.log.Errorf("peers bootstrapper cannot get default admin session: %v", err)
+		s.log.Error("peers bootstrapper cannot get default admin session", zap.Error(err))
 		r.SetUnfulfilled(shardsTimeRanges)
 		return nil, err
 	}
@@ -566,10 +565,10 @@ func (s *peersSource) ReadIndex(
 		resultLock    = &sync.Mutex{}
 		wg            sync.WaitGroup
 	)
-	s.log.WithFields(
-		xlog.NewField("shards", count),
-		xlog.NewField("concurrency", concurrency),
-	).Infof("peers bootstrapper bootstrapping index for ranges")
+	s.log.With(
+		zap.Int("shards", count),
+		zap.Int("concurrency", concurrency),
+	).Info("peers bootstrapper bootstrapping index for ranges")
 
 	workers := xsync.NewWorkerPool(concurrency)
 	workers.Init()
@@ -752,17 +751,20 @@ func (s *peersSource) peerAvailability(
 
 		if available == 0 {
 			// Can't peer bootstrap if there are no available peers.
-			s.log.Debugf(
-				"0 available peers out of %d for shard %d, unable to peer bootstrap",
-				total, shardIDUint)
+			s.log.Debug(
+				"0 available peers, unable to peer bootstrap",
+				zap.Int("total", total), zap.Uint32("shard", shardIDUint))
 			continue
 		}
 
 		if !topology.ReadConsistencyAchieved(
 			bootstrapConsistencyLevel, majorityReplicas, total, available) {
-			s.log.Debugf(
-				"read consistency of %v not achieved with %d replicas and %d total and %d available, unable to peer bootstrap",
-				bootstrapConsistencyLevel, majorityReplicas, total, available)
+			s.log.Debug(
+				"read consistency not achieved, unable to peer bootstrap",
+				zap.Any("level", bootstrapConsistencyLevel),
+				zap.Int("replicas", majorityReplicas),
+				zap.Int("total", total),
+				zap.Int("available", available))
 			continue
 		}
 

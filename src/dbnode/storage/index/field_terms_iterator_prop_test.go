@@ -23,14 +23,20 @@
 package index
 
 import (
+	"fmt"
 	"math/rand"
 	"os"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
+	"github.com/m3db/m3/src/m3ninx/index/segment"
+	xtest "github.com/m3db/m3/src/x/test"
 )
 
 func TestFieldsTermsIteratorPropertyTest(t *testing.T) {
@@ -41,7 +47,7 @@ func TestFieldsTermsIteratorPropertyTest(t *testing.T) {
 	parameters.Rng = rand.New(rand.NewSource(seed))
 	properties := gopter.NewProperties(parameters)
 
-	properties.Property("Fields Terms Iteration doesn't blow up", prop.ForAll(
+	properties.Property("Fields Terms Iteration works", prop.ForAll(
 		func(i fieldsTermsIteratorPropInput) (bool, error) {
 			expected := i.expected()
 			seg := i.setup.asSegment(t)
@@ -57,6 +63,38 @@ func TestFieldsTermsIteratorPropertyTest(t *testing.T) {
 			return true, nil
 		},
 		genFieldsTermsIteratorPropInput(),
+	))
+
+	reporter := gopter.NewFormatedReporter(true, 160, os.Stdout)
+	if !properties.Run(reporter) {
+		t.Errorf("failed with initial seed: %d", seed)
+	}
+}
+
+func TestFieldsTermsIteratorPropertyTestNoPanic(t *testing.T) {
+	ctrl := gomock.NewController(xtest.Reporter{t})
+	defer ctrl.Finish()
+
+	parameters := gopter.DefaultTestParameters()
+	seed := time.Now().UnixNano()
+	parameters.MinSuccessfulTests = 100
+	parameters.MaxSize = 40
+	parameters.Rng = rand.New(rand.NewSource(seed))
+	properties := gopter.NewProperties(parameters)
+
+	properties.Property("Fields Terms Iteration doesn't blow up", prop.ForAll(
+		func(seg segment.Segment, iterate bool) (bool, error) {
+			iter, err := newFieldsAndTermsIterator(seg, fieldsAndTermsIteratorOpts{
+				iterateTerms: iterate,
+			})
+			if err != nil {
+				return false, err
+			}
+			toSlice(t, iter)
+			return true, nil
+		},
+		genIterableSegment(ctrl),
+		gen.Bool(),
 	))
 
 	reporter := gopter.NewFormatedReporter(true, 160, os.Stdout)
@@ -89,6 +127,47 @@ func (i fieldsTermsIteratorPropInput) expected() []pair {
 		expected = append(expected, f)
 	}
 	return expected
+}
+
+func genIterableSegment(ctrl *gomock.Controller) gopter.Gen {
+	return gen.MapOf(genIterpoint(), gen.SliceOf(genIterpoint())).
+		Map(func(tagValues map[iterpoint][]iterpoint) segment.Segment {
+			fields := make([]iterpoint, 0, len(tagValues))
+			for f := range tagValues {
+				fields = append(fields, f)
+			}
+			sort.Slice(fields, func(i, j int) bool {
+				return strings.Compare(fields[i].value, fields[j].value) < 0
+			})
+
+			s := segment.NewMockSegment(ctrl)
+			fieldIterable := segment.NewMockFieldsIterable(ctrl)
+			fieldIterator := &stubFieldIterator{points: fields}
+			termsIterable := segment.NewMockTermsIterable(ctrl)
+
+			s.EXPECT().FieldsIterable().Return(fieldIterable).AnyTimes()
+			s.EXPECT().TermsIterable().Return(termsIterable).AnyTimes()
+			fieldIterable.EXPECT().Fields().Return(fieldIterator, nil).AnyTimes()
+
+			for f, values := range tagValues {
+				sort.Slice(values, func(i, j int) bool {
+					return strings.Compare(values[i].value, values[j].value) < 0
+				})
+				termIterator := &stubTermIterator{points: values}
+				termsIterable.EXPECT().Terms([]byte(f.value)).Return(termIterator, nil).AnyTimes()
+			}
+			return s
+		})
+}
+
+func genIterpoint() gopter.Gen {
+	return gen.Identifier().Map(func(s string, params *gopter.GenParameters) iterpoint {
+		ip := iterpoint{value: s}
+		if params.NextBool() {
+			ip.err = fmt.Errorf(s)
+		}
+		return ip
+	})
 }
 
 func genFieldsTermsIteratorPropInput() gopter.Gen {

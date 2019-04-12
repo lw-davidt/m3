@@ -62,7 +62,6 @@ type fieldsAndTermsIter struct {
 	seg  segment.Segment
 	opts fieldsAndTermsIteratorOpts
 
-	done      bool
 	err       error
 	fieldIter segment.FieldsIterator
 	termIter  segment.TermsIterator
@@ -104,20 +103,21 @@ func (fti *fieldsAndTermsIter) Reset(s segment.Segment, opts fieldsAndTermsItera
 }
 
 func (fti *fieldsAndTermsIter) setNextField() bool {
-	if fti.fieldIter == nil {
+	fieldIter := fti.fieldIter
+	if fieldIter == nil {
 		return false
 	}
 
-	for fti.fieldIter.Next() {
-		field := fti.fieldIter.Current()
+	for fieldIter.Next() {
+		field := fieldIter.Current()
 		if !fti.opts.allow(field) {
 			continue
 		}
-		fti.current.field = fti.fieldIter.Current()
+		fti.current.field = field
 		return true
 	}
 
-	fti.err = fti.fieldIter.Err()
+	fti.err = fieldIter.Err()
 	return false
 }
 
@@ -159,8 +159,13 @@ func (fti *fieldsAndTermsIter) setNext() bool {
 
 	hasNext = fti.termIter.Next()
 	if !hasNext {
-		fti.err = fti.fieldIter.Err()
-		return false
+		if fti.fieldIter.Err(); err != nil {
+			fti.err = err
+			return false
+		}
+		fti.termIter = nil
+		// i.e. no more terms for this field, should try the next one
+		return fti.setNext()
 	}
 
 	fti.current.term, _ = fti.termIter.Current()
@@ -168,7 +173,7 @@ func (fti *fieldsAndTermsIter) setNext() bool {
 }
 
 func (fti *fieldsAndTermsIter) Next() bool {
-	if fti.err != nil || fti.done {
+	if fti.err != nil {
 		return false
 	}
 	return fti.setNext()

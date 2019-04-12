@@ -44,7 +44,8 @@ func TestFieldsTermsIteratorSimple(t *testing.T) {
 	s := newFieldsTermsIterSetup(
 		pair{"a", "b"}, pair{"a", "c"},
 		pair{"d", "e"}, pair{"d", "f"},
-		pair{"g", "h"}, pair{"i", "j"},
+		pair{"g", "h"},
+		pair{"i", "j"},
 		pair{"k", "l"},
 	)
 	seg := s.asSegment(t)
@@ -58,7 +59,8 @@ func TestFieldsTermsIteratorSimpleSkip(t *testing.T) {
 	input := []pair{
 		pair{"a", "b"}, pair{"a", "c"},
 		pair{"d", "e"}, pair{"d", "f"},
-		pair{"g", "h"}, pair{"i", "j"},
+		pair{"g", "h"},
+		pair{"i", "j"},
 		pair{"k", "l"},
 	}
 	s := newFieldsTermsIterSetup(input...)
@@ -74,7 +76,8 @@ func TestFieldsTermsIteratorSimpleSkip(t *testing.T) {
 	slice := toSlice(t, iter)
 	requireSlicesEqual(t, []pair{
 		pair{"d", "e"}, pair{"d", "f"},
-		pair{"g", "h"}, pair{"i", "j"},
+		pair{"g", "h"},
+		pair{"i", "j"},
 	}, slice)
 }
 
@@ -82,7 +85,8 @@ func TestFieldsTermsIteratorTermsOnly(t *testing.T) {
 	s := newFieldsTermsIterSetup(
 		pair{"a", "b"}, pair{"a", "c"},
 		pair{"d", "e"}, pair{"d", "f"},
-		pair{"g", "h"}, pair{"i", "j"},
+		pair{"g", "h"},
+		pair{"i", "j"},
 		pair{"k", "l"},
 	)
 	seg := s.asSegment(t)

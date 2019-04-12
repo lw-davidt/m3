@@ -778,13 +778,13 @@ func (b *block) executorWithRLock() (search.Executor, error) {
 	return executor.NewExecutor(readers), nil
 }
 
-func (b *block) segmentsWithRLock() ([]segment.Segment, error) {
-	expectedSegments := len(b.foregroundSegments) + len(b.backgroundSegments)
+func (b *block) segmentsWithRLock() []segment.Segment {
+	numSegments := len(b.foregroundSegments) + len(b.backgroundSegments)
 	for _, group := range b.shardRangesSegments {
-		expectedSegments += len(group.segments)
+		numSegments += len(group.segments)
 	}
 
-	segments := make([]segment.Segment, 0, expectedSegments)
+	segments := make([]segment.Segment, 0, numSegments)
 	// Add foreground & background segments.
 	for _, seg := range b.foregroundSegments {
 		segments = append(segments, seg.Segment())
@@ -800,7 +800,7 @@ func (b *block) segmentsWithRLock() ([]segment.Segment, error) {
 		}
 	}
 
-	return segments, nil
+	return segments
 }
 
 // Query acquires a read lock on the block so that the segments
@@ -926,9 +926,9 @@ func (b *block) addQueryResults(
 // safe to return docs directly from the segments from this method, the
 // results datastructure is used to copy it every time documents are added
 // to the results datastructure). This is similar to how Query() operates.
-// NB: Aggregate is required in addition to Query, to optimise for the case
-// when we can skip going to raw documents, and instead rely on pre-aggregated
-// results via the FST underlying the index.
+// NB: Aggregate is an optimization of the general aggregate Query approach
+// for the case when we can skip going to raw documents, and instead rely on
+// pre-aggregated results via the FST underlying the index.
 func (b *block) Aggregate(
 	cancellable *resource.CancellableLifetime,
 	opts QueryOptions,
@@ -939,11 +939,6 @@ func (b *block) Aggregate(
 
 	if b.state == blockStateClosed {
 		return false, ErrUnableToQueryBlockClosed
-	}
-
-	segs, err := b.segmentsWithRLock()
-	if err != nil {
-		return false, err
 	}
 
 	size := results.Size()
@@ -964,6 +959,7 @@ func (b *block) Aggregate(
 		return false, err
 	}
 
+	segs := b.segmentsWithRLock()
 	for _, s := range segs {
 		if opts.LimitExceeded(size) {
 			break
@@ -989,7 +985,7 @@ func (b *block) Aggregate(
 			}
 
 			field, term := iter.Current()
-			batch = b.appendAggregateResults(batch, field, term, iterateTerms)
+			batch = b.appendFieldAndTermToBatch(batch, field, term, iterateTerms)
 			if len(batch) < batchSize {
 				continue
 			}
@@ -1027,7 +1023,7 @@ func (b *block) Aggregate(
 	return exhaustive, nil
 }
 
-func (b *block) appendAggregateResults(
+func (b *block) appendFieldAndTermToBatch(
 	batch []AggregateResultsEntry,
 	field, term []byte,
 	includeTerms bool,

@@ -117,9 +117,9 @@ func (r *aggregatedResults) AddFields(batch []AggregateResultsEntry) (int, error
 			aggValues = r.valuesPool.Get()
 			// we can avoid the copy because we assume ownership of the passed ident.ID,
 			// but still need to finalize it.
-			r.resultsMap.set(f, aggValues, _AggregateResultsMapKeyOptions{
-				copyKey:     false,
-				finalizeKey: true,
+			r.resultsMap.SetUnsafe(f, aggValues, AggregateResultsMapSetUnsafeOptions{
+				NoCopyKey:     true,
+				NoFinalizeKey: false,
 			})
 		} else {
 			// because we already have a entry for this field, we release the ident back to
@@ -128,16 +128,16 @@ func (r *aggregatedResults) AddFields(batch []AggregateResultsEntry) (int, error
 		}
 		valuesMap := aggValues.Map()
 		for _, t := range entry.Terms {
-			_, ok := valuesMap.Get(t)
+			ok := valuesMap.Contains(t)
 			if !ok {
 				// we can avoid the copy because we assume ownership of the passed ident.ID,
 				// but still need to finalize it.
-				valuesMap.set(t, struct{}{}, _AggregateValuesMapKeyOptions{
-					copyKey:     false,
-					finalizeKey: true,
+				valuesMap.SetUnsafe(t, struct{}{}, AggregateValuesMapSetUnsafeOptions{
+					NoCopyKey:     true,
+					NoFinalizeKey: false,
 				})
 			} else {
-				// because we already have a entry for this field, we release the ident back to
+				// because we already have a entry for this term, we release the ident back to
 				// the underlying pool.
 				t.Finalize()
 			}

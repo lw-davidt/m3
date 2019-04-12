@@ -181,7 +181,7 @@ type AggregateResults interface {
 		aggregateQueryOpts AggregateResultsOptions,
 	)
 
-	// AggregateResultsOptions returns the set AggregateResultsOptions.
+	// AggregateResultsOptions returns the options for this AggregateResult.
 	AggregateResultsOptions() AggregateResultsOptions
 
 	// AddFields adds the batch of fields to the results set, it will

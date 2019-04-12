@@ -68,7 +68,6 @@ type fieldsAndTermsIter struct {
 	termIter  segment.TermsIterator
 
 	current struct {
-		valid bool
 		field []byte
 		term  []byte
 	}
@@ -114,12 +113,10 @@ func (fti *fieldsAndTermsIter) setNextField() bool {
 		if !fti.opts.allow(field) {
 			continue
 		}
-		fti.current.valid = true
 		fti.current.field = fti.fieldIter.Current()
 		return true
 	}
 
-	fti.current.valid = false
 	fti.err = fti.fieldIter.Err()
 	return false
 }
@@ -133,7 +130,6 @@ func (fti *fieldsAndTermsIter) setNext() bool {
 	// if iterating both terms and fields, check if current field has another term
 	if fti.termIter != nil {
 		if fti.termIter.Next() {
-			fti.current.valid = true
 			fti.current.term, _ = fti.termIter.Current()
 			return true
 		}
@@ -156,7 +152,6 @@ func (fti *fieldsAndTermsIter) setNext() bool {
 	// and get next term for the field
 	termsIter, err := fti.seg.TermsIterable().Terms(fti.current.field)
 	if err != nil {
-		fti.current.valid = false
 		fti.err = err
 		return false
 	}
@@ -164,11 +159,10 @@ func (fti *fieldsAndTermsIter) setNext() bool {
 
 	hasNext = fti.termIter.Next()
 	if !hasNext {
-		fti.current.valid = false
 		fti.err = fti.fieldIter.Err()
+		return false
 	}
 
-	fti.current.valid = true
 	fti.current.term, _ = fti.termIter.Current()
 	return true
 }

@@ -719,12 +719,12 @@ func TestNamespaceIndexBlockAggregateQueryWithAllQuery(t *testing.T) {
 	b0.EXPECT().Stats(gomock.Any()).Return(nil).AnyTimes()
 	b0.EXPECT().Close().Return(nil)
 	b0.EXPECT().StartTime().Return(t0).AnyTimes()
-	b0.EXPECT().EndTime().Return(t0.Add(blockSize)).AnyTimes()
+	b0.EXPECT().EndTime().Return(t1).AnyTimes()
 	b1 := index.NewMockBlock(ctrl)
 	b1.EXPECT().Stats(gomock.Any()).Return(nil).AnyTimes()
 	b1.EXPECT().Close().Return(nil)
 	b1.EXPECT().StartTime().Return(t1).AnyTimes()
-	b1.EXPECT().EndTime().Return(t1.Add(blockSize)).AnyTimes()
+	b1.EXPECT().EndTime().Return(t2).AnyTimes()
 	newBlockFn := func(
 		ts time.Time,
 		md namespace.Metadata,

@@ -56,13 +56,15 @@ const (
 )
 
 var (
-	errOptionsIdentifierPoolUnspecified = errors.New("identifier pool is unset")
-	errOptionsBytesPoolUnspecified      = errors.New("checkedbytes pool is unset")
-	errOptionsResultsPoolUnspecified    = errors.New("results pool is unset")
-	errOptionsAggResultsPoolUnspecified = errors.New("aggregate results pool is unset")
-	errOptionsAggValuesPoolUnspecified  = errors.New("aggregate values pool is unset")
-	errIDGenerationDisabled             = errors.New("id generation is disabled")
-	errPostingsListCacheUnspecified     = errors.New("postings list cache is unset")
+	errOptionsIdentifierPoolUnspecified      = errors.New("identifier pool is unset")
+	errOptionsBytesPoolUnspecified           = errors.New("checkedbytes pool is unset")
+	errOptionsResultsPoolUnspecified         = errors.New("results pool is unset")
+	errOptionsAggResultsPoolUnspecified      = errors.New("aggregate results pool is unset")
+	errOptionsAggValuesPoolUnspecified       = errors.New("aggregate values pool is unset")
+	errOptionsDocPoolUnspecified             = errors.New("docs array pool is unset")
+	errOptionsAggResultsEntryPoolUnspecified = errors.New("aggregate results entry array pool is unset")
+	errIDGenerationDisabled                  = errors.New("id generation is disabled")
+	errPostingsListCacheUnspecified          = errors.New("postings list cache is unset")
 
 	defaultForegroundCompactionOpts compaction.PlannerOptions
 	defaultBackgroundCompactionOpts compaction.PlannerOptions
@@ -189,8 +191,14 @@ func (o *opts) Validate() error {
 	if o.aggResultsPool == nil {
 		return errOptionsAggResultsPoolUnspecified
 	}
-	if o.aggResultsPool == nil {
+	if o.aggValuesPool == nil {
 		return errOptionsAggValuesPoolUnspecified
+	}
+	if o.docArrayPool == nil {
+		return errOptionsDocPoolUnspecified
+	}
+	if o.aggResultsEntryArrayPool == nil {
+		return errOptionsAggResultsEntryPoolUnspecified
 	}
 	if o.postingsListCache == nil {
 		return errPostingsListCacheUnspecified

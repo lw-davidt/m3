@@ -65,6 +65,7 @@ func main() {
 		fmt.Printf("error creating logger: %v\n", err)
 		os.Exit(1)
 	}
+	defer rawLogger.Sync()
 
 	logger := rawLogger.Sugar()
 	envPort := os.Getenv(portEnvVar)

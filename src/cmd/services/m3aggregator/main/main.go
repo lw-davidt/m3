@@ -65,6 +65,8 @@ func main() {
 		fmt.Printf("error creating logger: %v\n", err)
 		os.Exit(1)
 	}
+	defer logger.Sync()
+
 	scope, closer, err := cfg.Metrics.NewRootScope()
 	if err != nil {
 		logger.Fatal("error creating metrics root scope", zap.Error(err))

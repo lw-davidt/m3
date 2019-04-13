@@ -32,10 +32,10 @@ import (
 	xerrors "github.com/m3db/m3/src/x/errors"
 	"github.com/m3db/m3/src/x/retry"
 
-	"go.uber.org/zap"
 	"github.com/coreos/etcd/clientv3"
 	"github.com/golang/protobuf/proto"
 	"github.com/uber-go/tally"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 )
 
@@ -111,7 +111,7 @@ func NewStore(etcdKV clientv3.KV, etcdWatcher clientv3.Watcher, opts Options) (k
 		go func() {
 			for range store.cacheUpdatedCh {
 				if err := store.writeCacheToFile(); err != nil {
-					store.logger.With(zap.Error(err)).Error("failed to write cache file")
+					store.logger.With(zap.Error(err)).Error("failed to write cache to file")
 				}
 			}
 		}()

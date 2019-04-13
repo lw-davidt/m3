@@ -180,7 +180,7 @@ func (s *handler) Handle(conn net.Conn) {
 			s.metrics.addUntimedErrors.Inc(1)
 			s.log.With(
 				zap.String("remoteAddress", remoteAddress),
-				zap.Stringer("typer", untimedMetric.Type),
+				zap.Stringer("type", untimedMetric.Type),
 				zap.Stringer("id", untimedMetric.ID),
 				zap.Any("metadatas", stagedMetadatas),
 				zap.Error(err),

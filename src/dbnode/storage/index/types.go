@@ -300,7 +300,7 @@ type Block interface {
 		results AggregateResults,
 	) (exhaustive bool, err error)
 
-	// AddResults adds bootstrap results to the block, if c.
+	// AddResults adds bootstrap results to the block.
 	AddResults(results result.IndexBlock) error
 
 	// Tick does internal house keeping operations.

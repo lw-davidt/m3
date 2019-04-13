@@ -1007,6 +1007,9 @@ func (b *block) Aggregate(
 		}
 	}
 
+	// NB: it is safe to Close() a fieldsAndTermsIterator twice. We structure
+	// the code to rely on this intentionally here, to ensure we're releasing
+	// any held resources by the iterator.
 	if err := iter.Close(); err != nil {
 		return false, err
 	}
